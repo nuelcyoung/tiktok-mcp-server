@@ -11,7 +11,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from pydantic import Field
 
 from tiktokmcp.app import get_app
-from tiktokmcp.errors import tool_errors
+from tiktokmcp.errors import RateLimitedError, tool_errors
 from tiktokmcp.models import Transcript
 from tiktokmcp.tools._params import VideoRef, read_only
 from tiktokmcp.validation import build_video_url
@@ -47,7 +47,15 @@ def register(mcp: MCPServer) -> None:
                 video, audio = Path(tmp, "video.mp4"), Path(tmp, "audio.mp3")
 
                 await ctx.report_progress(0, STEPS, "Downloading video")
-                await anyio.to_thread.run_sync(transcriber.download, url, video)
+                # yt-dlp hits TikTok too: take a slot so a download cannot ride
+                # along on top of a scrape and blow the request budget.
+                await app.throttle.slot()
+                try:
+                    await anyio.to_thread.run_sync(transcriber.download, url, video)
+                except RateLimitedError:
+                    # A blocked download means the IP is hot: make the next call wait too.
+                    app.throttle.report_block("the media CDN rate-limited a download")
+                    raise
 
                 await ctx.report_progress(1, STEPS, "Extracting audio")
                 await anyio.to_thread.run_sync(transcriber.extract_audio, video, audio)
@@ -64,4 +72,4 @@ def register(mcp: MCPServer) -> None:
                 language=result.language,
                 duration=result.duration,
                 words=result.words,
-            )
+            ).model_dump()

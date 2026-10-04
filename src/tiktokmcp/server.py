@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
 import sys
 
@@ -22,6 +23,8 @@ Read-only access to public TikTok data via a headless browser.
 - Each browser call takes several seconds; transcribe_video can take up to a minute.
 - Counts such as views and likes in listings are TikTok's display strings (e.g. '1.2M').
 - Empty results come with a `note` when TikTok blocked or hid the data; do not retry immediately.
+- Requests are paced and identical reads are cached, so a retry right after a block adds nothing:
+  when a `note` says TikTok is rate-limiting, wait or gather other data instead of calling again.
 """
 
 
@@ -53,6 +56,12 @@ def main(argv: list[str] | None = None) -> None:
         stream=sys.stderr,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    if args.transport == "stdio":
+        # Windows defaults these streams to a local codepage, which cannot encode
+        # the emoji and non-Latin bios TikTok profiles are full of.
+        for stream in (sys.stdout, sys.stderr):
+            with contextlib.suppress(AttributeError, ValueError):  # type: ignore[attr-defined]
+                stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
 
     mcp = create_server(settings)
     if args.transport == "stdio":

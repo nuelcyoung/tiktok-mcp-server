@@ -1,7 +1,8 @@
 """Transcription pipeline: yt-dlp download -> ffmpeg audio -> speech-to-text API.
 
-The API is any OpenAI-compatible ``POST /audio/transcriptions`` endpoint, so
-Groq, OpenAI, and self-hosted Whisper servers all work with a URL and a key.
+The API is any OpenAI-compatible speech-to-text endpoint. TRANSCRIBE_API_URL is
+used exactly as given, so Groq, OpenAI, and self-hosted Whisper servers all work
+with their full endpoint URL and a key.
 Each stage is synchronous and exposed separately so the tool can run them in
 a worker thread and report progress between stages.
 """
@@ -19,19 +20,20 @@ import httpx
 import yt_dlp
 
 from tiktokmcp.config import Settings
-from tiktokmcp.errors import ConfigurationError, UpstreamError
+from tiktokmcp.errors import ConfigurationError, RateLimitedError, UpstreamError
 from tiktokmcp.models import TranscriptWord
 from tiktokmcp.validation import require_tiktok_url
 
 logger = logging.getLogger(__name__)
 
-ENDPOINT_PATH = "/audio/transcriptions"
-
-
-def transcription_endpoint(api_url: str) -> str:
-    """Accept a base URL (``.../v1``) or the full ``.../audio/transcriptions`` endpoint."""
-    url = api_url.rstrip("/")
-    return url if url.endswith(ENDPOINT_PATH) else url + ENDPOINT_PATH
+# yt-dlp's own wording when TikTok pushes back instead of serving the media.
+RATE_LIMIT_MARKERS = (
+    "429",
+    "too many requests",
+    "rate limit",
+    "confirm you're not a bot",
+    "confirm you’re not a bot",
+)
 
 
 @dataclass(slots=True)
@@ -70,7 +72,7 @@ class Transcriber:
         if not self._settings.transcribe_api_url:
             raise ConfigurationError(
                 "TRANSCRIBE_API_URL is not set. Add TRANSCRIBE_API_URL and TRANSCRIBE_API_KEY to this "
-                "server's env block (any OpenAI-compatible endpoint, e.g. https://api.groq.com/openai/v1)."
+                "server's env block (any OpenAI-compatible endpoint, e.g. https://api.groq.com/openai/v1/audio/transcriptions)."
             )
         find_ffmpeg(self._settings.ffmpeg_path)
 
@@ -86,12 +88,22 @@ class Transcriber:
             "noprogress": True,
             "socket_timeout": 30,
             "retries": 3,
+            "fragment_retries": 3,
+            "extractor_retries": 2,
             "max_filesize": limit,
+            # Space out the media requests instead of pulling every fragment at once.
+            "sleep_requests": 1,
+            "http_headers": {"Accept-Language": "en-US,en;q=0.9"},
         }
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
         except yt_dlp.utils.DownloadError as exc:
+            if any(marker in str(exc).lower() for marker in RATE_LIMIT_MARKERS):
+                raise RateLimitedError(
+                    "TikTok rate-limited the download. Wait a few minutes before retrying; "
+                    "repeated attempts extend the block."
+                ) from exc
             raise UpstreamError(f"Could not download the video: {exc}") from exc
 
         if not dest.exists():
@@ -127,7 +139,7 @@ class Transcriber:
         with audio.open("rb") as f:
             try:
                 return self._client.post(
-                    transcription_endpoint(self._settings.transcribe_api_url or ""),
+                    self._settings.transcribe_api_url or "",
                     headers={"Authorization": f"Bearer {key}"} if key else {},
                     data=fields,
                     files={"file": (audio.name, f, "audio/mpeg")},

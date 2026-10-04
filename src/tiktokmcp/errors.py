@@ -31,6 +31,10 @@ class UpstreamError(TikTokMCPError):
     """TikTok, yt-dlp, ffmpeg, or the transcription API failed in a way we can describe."""
 
 
+class RateLimitedError(TikTokMCPError):
+    """TikTok refused the request for rate-limit reasons."""
+
+
 @contextmanager
 def tool_errors() -> Iterator[None]:
     """Convert anticipated exceptions into ``ToolError`` for the client."""

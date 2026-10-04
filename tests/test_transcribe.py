@@ -10,7 +10,7 @@ import pytest
 
 from tiktokmcp.config import Settings
 from tiktokmcp.errors import ConfigurationError
-from tiktokmcp.transcribe import Transcriber, transcription_endpoint
+from tiktokmcp.transcribe import Transcriber
 
 VERBOSE = {
     "text": " hello world ",
@@ -28,22 +28,22 @@ def audio(tmp_path: Path) -> Path:
 
 
 def make(handler, **settings) -> Transcriber:
-    defaults = {"transcribe_api_url": "https://stt.example/v1", "transcribe_api_key": "sk-test"}
+    defaults = {"transcribe_api_url": "https://stt.example/v1/audio/transcriptions", "transcribe_api_key": "sk-test"}
     return Transcriber(
         Settings(**{**defaults, **settings}), client=httpx.Client(transport=httpx.MockTransport(handler))
     )
 
 
-@pytest.mark.parametrize(
-    "url",
-    [
-        "https://api.groq.com/openai/v1",
-        "https://api.groq.com/openai/v1/",
-        "https://api.groq.com/openai/v1/audio/transcriptions",
-    ],
-)
-def test_endpoint_accepts_base_or_full_url(url: str) -> None:
-    assert transcription_endpoint(url) == "https://api.groq.com/openai/v1/audio/transcriptions"
+def test_url_is_used_verbatim(audio: Path) -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200, json={"text": "ok"})
+
+    url = "https://stt.example/custom/path"
+    make(handler, transcribe_api_url=url).transcribe(audio)
+    assert seen == [url]
 
 
 def test_sends_key_model_and_parses_words(audio: Path) -> None:
