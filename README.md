@@ -1,5 +1,7 @@
 # TikTok MCP Server
 
+[![M8ven Score](https://m8ven.ai/badge/mcp/nuelcyoung-tiktok-mcp-server-izb1xs)](https://m8ven.ai/mcp/nuelcyoung-tiktok-mcp-server-izb1xs?s=readme)
+
 A [Model Context Protocol](https://modelcontextprotocol.io) server that lets an AI agent read public TikTok data: **search**, **profiles**, **videos**, **discovery**, **comments**, and **transcription**.
 
 There is no TikTok developer account to apply for and no OAuth flow. Everything comes off public pages, so the only credential you might enter is a key for your own transcription endpoint.
